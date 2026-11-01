@@ -1,0 +1,994 @@
+# -*- coding: utf-8 -*-
+"""
+Jumper Wire Pen - FULL PEN  (live, parametric)                 FreeCAD macro
+=========================================================================
+Run it from  Macro > Macros...  One window opens and STAYS OPEN: change any size
+and the pen in the 3D view is rebuilt a moment later.  Close the window when you
+are done.  Your last values are remembered.
+
+The pen, rear to front:
+
+    SPOOL HOLDER < body segments < pen tip
+
+  - Body segments: identical, a threaded stub at one end and a threaded socket at the
+    other.  Choose how many go between the spool holder and the tip.
+  - Spool holder: a round drum at the rear end of the pen with one socket at the front
+    (the first body segment, or the tip, screws into its round nose), exactly in line with the pen
+    (looking down the spool axis, the pen runs through its centre).  The bought spool lies
+    on its side inside, centred on the pen axis; the wire leaves the rim of the spool into
+    a funnel and runs along the pen to the needle.  The big round knob on top is the lid:
+    it has a thick grip rim, is hollow to save plastic, and screws on and off by hand, no tools.
+  - Pen tip: holds the bought needle tube.
+Thread, body diameter and wire hole are shared, so all parts always fit.
+
+The thread is made for FDM printing: coarse step, 45-degree flanks (no flat
+overhangs), flat crests and roots at least as wide as one nozzle line.
+
+Printing: tip and segments stand on their thread stub, the holder lies flat (spool axis
+pointing up), the lid lies on its knob with the thread pointing up.  Use "Show one part in
+print orientation" in the View tab.  The Colors tab sets the
+display color of every part.
+"""
+import math
+import os
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+from FreeCAD import Vector as V
+
+try:
+    from PySide import QtWidgets, QtCore
+except ImportError:
+    from PySide import QtGui as QtWidgets, QtCore
+from PySide import QtGui
+
+DOC_NAME = "JumperWirePen_Assembly"
+PREF_PATH = "User parameter:BaseApp/Preferences/Macro/JumperWirePenAssemblyV2"
+OLD_PREF_PATHS = (("User parameter:BaseApp/Preferences/Macro/JumperWirePenTipV2", None),
+                  ("User parameter:BaseApp/Preferences/Macro/JumperWirePenBodyV1", ("seg_len", "fit_clr")),
+                  ("User parameter:BaseApp/Preferences/Macro/JumperWirePenAssemblyV1", None))
+DIALOG_NAME = "JumperWirePenAssemblyDialog"
+
+SOCKET_EXTRA = 0.5      # a socket is this much deeper than its stub is long
+SPREAD_GAP = 12.0       # gap between parts in the "spread apart" view
+MAX_SEG = 6
+PART_NAMES = ["Pen tip", "Body segment", "Spool holder", "Spool holder lid"]
+
+# key, label, default, min, max, step, group                    (sizes in mm)
+PARAMS = [
+    ("base_len",     "Straight part before the taper",               3.0,  0.5,  20.0, 0.5,  "Tip shape"),
+    ("taper_len",    "Taper length",                                22.0,  5.0, 100.0, 1.0,  "Tip shape"),
+    ("tip_d",        "Tip end diameter",                             4.5,  3.0,  15.0, 0.1,  "Tip shape"),
+    ("collar_len",   "Tip end collar length",                        3.0,  1.0,  15.0, 0.5,  "Tip shape"),
+    ("body_d",       "Body diameter (tip, segments, holder nose)",           9.0,  6.0,  30.0, 0.5,  "Body"),
+    ("seg_len",      "Segment length (shoulder to front face)",     20.0,  6.0,  60.0, 1.0,  "Body"),
+    ("thread_d",     "Thread outer diameter",                        6.0,  3.0,  28.0, 0.5,  "Thread"),
+    ("thread_pitch", "Thread step (distance per turn)",              2.5,  1.0,   6.0, 0.1,  "Thread"),
+    ("thread_depth", "Thread depth",                                0.75,  0.3,   2.5, 0.05, "Thread"),
+    ("thread_len",   "Thread length (stub length)",                  8.0,  4.0,  24.0, 0.5,  "Thread"),
+    ("fit_clr",      "Fit clearance (socket bigger, each side)",     0.2,  0.0,   0.6, 0.05, "Thread"),
+    ("chan_d",       "Wire hole diameter (through the whole pen)",   1.0,  0.3,   6.0, 0.1,  "Holes and needle"),
+    ("tube_od",      "Needle tube outer diameter",                   1.6,  0.6,   6.0, 0.05, "Holes and needle"),
+    ("seat_clr",     "Needle seat clearance (each side)",           0.05,  0.0,   0.5, 0.01, "Holes and needle"),
+    ("tube_id",      "Needle tube inner diameter (preview only)",    0.6,  0.2,   5.0, 0.05, "Holes and needle"),
+    ("tube_insert",  "Tube depth inside the tip (0 = no seat, the tube sits on the end face)", 10.0,  0.0,  40.0, 1.0,  "Holes and needle"),
+    ("tube_out",     "Tube length sticking out",                    25.0,  5.0,  60.0, 1.0,  "Holes and needle"),
+    ("spool_d",      "Spool outer diameter (widest part)",          18.0,  8.0,  60.0, 0.5,  "Spool holder"),
+    ("spool_wid",    "Spool total width (the spool you use now)",    6.4,  2.0,  30.0, 0.1,  "Spool holder"),
+    ("spool_space",  "Spool space: how deep the holder is cut (the widest spool it takes)", 12.0,  2.0,  40.0, 0.5,  "Spool holder"),
+    ("spool_hole",   "Spool center hole diameter (the pin inside is a bit thinner)",    3.3,  1.0,  15.0, 0.1,  "Spool holder"),
+    ("lid_len",      "Lid thread length (the lid you open by hand)",   7.0,  3.0,  16.0, 0.5,  "Spool holder"),
+]
+TIP_KEYS = ("body_d", "base_len", "taper_len", "tip_d", "collar_len", "thread_d", "thread_pitch",
+            "thread_depth", "thread_len", "chan_d", "tube_od", "seat_clr", "tube_id", "tube_insert", "tube_out")
+SEG_KEYS = ("seg_len", "body_d", "chan_d", "thread_d", "thread_pitch", "thread_depth", "thread_len", "fit_clr")
+HEAD_KEYS = ("body_d", "chan_d", "thread_d", "thread_pitch", "thread_depth", "thread_len", "fit_clr",
+             "spool_d", "spool_wid", "spool_space", "spool_hole", "lid_len")
+
+
+def defaults():
+    d = dict((p[0], p[2]) for p in PARAMS)
+    d["n_front"] = 1
+    d["show_tube"] = True
+    d["spread"] = False
+    d["cut"] = False
+    d["print_view"] = False
+    d["print_part"] = 0
+    return d
+
+
+def clamp_param(p, value):
+    return min(max(float(value), p[3]), p[4])
+
+
+def seed_values():
+    """First run: carry over the sizes the earlier macros had saved."""
+    out = {}
+    sentinel = -98765.0
+    try:
+        for path, only in OLD_PREF_PATHS:
+            pg = App.ParamGet(path)
+            for p in PARAMS:
+                if only is not None and p[0] not in only:
+                    continue
+                v = pg.GetFloat(p[0], sentinel)
+                if v != sentinel:
+                    out[p[0]] = clamp_param(p, v)
+        out["show_tube"] = App.ParamGet(OLD_PREF_PATHS[0][0]).GetBool("show_tube", True)
+    except Exception:
+        pass
+    return out
+
+
+def load_saved():
+    d = defaults()
+    try:
+        pg = App.ParamGet(PREF_PATH)
+        if not pg.GetBool("seeded", False):
+            d.update(seed_values())
+            return d
+        for p in PARAMS:
+            d[p[0]] = clamp_param(p, pg.GetFloat(p[0], p[2]))
+        d["n_front"] = min(max(pg.GetInt("n_front", 1), 0), MAX_SEG)
+        d["show_tube"] = pg.GetBool("show_tube", True)
+        d["spread"] = pg.GetBool("spread", False)
+        d["cut"] = pg.GetBool("cut", False)
+        d["print_view"] = pg.GetBool("print_view", False)
+        d["print_part"] = min(max(pg.GetInt("print_part", 0), 0), len(PART_NAMES) - 1)
+    except Exception:
+        pass
+    return d
+
+
+def save_values(d):
+    try:
+        pg = App.ParamGet(PREF_PATH)
+        for p in PARAMS:
+            pg.SetFloat(p[0], float(d[p[0]]))
+        pg.SetInt("n_front", int(d["n_front"]))
+        pg.SetBool("show_tube", bool(d["show_tube"]))
+        pg.SetBool("spread", bool(d["spread"]))
+        pg.SetBool("cut", bool(d["cut"]))
+        pg.SetBool("print_view", bool(d["print_view"]))
+        pg.SetInt("print_part", int(d["print_part"]))
+        pg.SetBool("seeded", True)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------- part colors
+COLOR_ITEMS = [
+    ("tip",   "Pen tip",                   (0.42, 0.57, 0.76)),     # the printed parts: one blue-grey family,
+    ("seg",   "Body segments",             (0.56, 0.69, 0.85)),     # told apart only by how light they are
+    ("tube",  "Needle tube (bought part)", (0.88, 0.90, 0.93)),     # steel
+    ("head",  "Spool holder",              (0.73, 0.80, 0.89)),
+    ("lid",   "Spool holder lid",          (0.45, 0.55, 0.70)),
+    ("spool", "Bought spool (preview)",    (0.85, 0.60, 0.40)),     # copper, see-through
+]
+# the defaults of the first version; older versions saved them, so they count as "never changed"
+OLD_DEFAULT_HEX = {"tip": "#292b33", "seg": "#4c75c7", "tube": "#d1d1db",
+                   "head": "#338c80", "lid": "#40b29e", "spool": "#d97326"}
+DEFAULT_COLORS = dict((k, c) for k, _label, c in COLOR_ITEMS)
+COLOR_LABELS = dict((k, label) for k, label, _c in COLOR_ITEMS)
+OBJ_COLOR_KEY = {"PenTip": "tip", "NeedleTube_buy": "tube", "SpoolHolder": "head",
+                 "SpoolLid": "lid", "BoughtSpool_preview": "spool"}
+
+
+def rgb_to_hex(c):
+    return "#%02x%02x%02x" % tuple(int(round(min(max(v, 0.0), 1.0) * 255)) for v in c)
+
+
+def hex_to_rgb(s):
+    return tuple(int(s[i:i + 2], 16) / 255.0 for i in (1, 3, 5))
+
+
+def load_colors():
+    """The saved part colors (and whether every second segment is a bit darker)."""
+    out = dict(DEFAULT_COLORS)
+    alt = True
+    try:
+        pg = App.ParamGet(PREF_PATH)
+        alt = pg.GetBool("seg_alt", True)
+        for k, _label, _c in COLOR_ITEMS:
+            s = pg.GetString("color_" + k, "")
+            try:
+                if len(s) == 7 and s[0] == "#" and s.lower() != OLD_DEFAULT_HEX[k]:
+                    out[k] = hex_to_rgb(s)
+            except ValueError:
+                pass
+    except Exception:
+        pass
+    return out, alt
+
+
+def save_colors(colors, alt):
+    try:
+        pg = App.ParamGet(PREF_PATH)
+        pg.SetBool("seg_alt", bool(alt))
+        for k, _label, _c in COLOR_ITEMS:
+            if rgb_to_hex(colors[k]) == rgb_to_hex(DEFAULT_COLORS[k]):
+                try:
+                    pg.RemString("color_" + k)          # still the default: follows future default changes
+                except Exception:
+                    pass
+            else:
+                pg.SetString("color_" + k, rgb_to_hex(colors[k]))
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------- geometry helpers
+def cyl_x(r, x0, x1):
+    return Part.makeCylinder(r, x1 - x0, V(x0, 0, 0), V(1, 0, 0))
+
+
+def cyl_z(r, z0, z1):
+    return Part.makeCylinder(r, z1 - z0, V(0, 0, z0), V(0, 0, 1))
+
+
+def clean(shape):
+    """Merge coplanar faces, but only keep the result if it is still a valid solid of the same volume."""
+    try:
+        s = shape.copy().removeSplitter()        # on a copy: removeSplitter can damage the shape it is called on
+        if s.isValid() and abs(s.Volume - shape.Volume) <= 1e-3 * abs(shape.Volume):
+            return s
+    except Exception:
+        pass
+    return shape
+
+
+def thread_extra(pitch, depth):
+    """How far the ridge reaches into the core so that it fuses cleanly."""
+    flat = pitch / 2.0 - depth
+    return min(0.1, max(flat / 2.0 - 0.02, 0.0))
+
+
+def ridge_hw(pitch, depth):
+    """Half width of the ridge at its buried inner end (45-degree flanks)."""
+    return pitch / 4.0 + depth / 2.0 + thread_extra(pitch, depth)
+
+
+def thread_ridge(r_crest, pitch, depth, z0, z1):
+    """Helical trapezoid ridge around +Z: 45-degree flanks, flat crest and flat
+    root of equal width (pitch/2 - depth).  The centre-line runs from z0 to z1."""
+    flat = pitch / 2.0 - depth
+    extra = thread_extra(pitch, depth)
+    hw_c = flat / 2.0                           # half crest flat
+    hw_a = ridge_hw(pitch, depth)               # half width at the buried inner end
+    r_a = r_crest - depth - extra
+    helix = Part.makeHelix(pitch, z1 - z0, r_a)
+    pts = [V(r_a, 0, -hw_a), V(r_crest, 0, -hw_c), V(r_crest, 0, hw_c),
+           V(r_a, 0, hw_a), V(r_a, 0, -hw_a)]
+    sw = helix.makePipeShell([Part.makePolygon(pts)], True, True)
+    sw.translate(V(0, 0, z0))
+    return sw
+
+
+def check_thread(p):
+    z_stub = ridge_hw(p["thread_pitch"], p["thread_depth"]) + 0.05
+    if p["thread_len"] - 2.0 * z_stub < 0.75 * p["thread_pitch"]:
+        raise ValueError("the thread length is too short for this step - make the thread longer")
+
+
+def make_stub_gen(R_M, P, depth, Lt):
+    """A male thread stub in local coordinates (axis +Z, shoulder at z = 0)."""
+    z0 = ridge_hw(P, depth) + 0.05
+    return cyl_z(R_M - depth, 0.0, Lt).fuse(thread_ridge(R_M, P, depth, z0, Lt - z0))
+
+
+def make_socket_tool(R_M, P, depth, Lt, clr, bore_to):
+    """Cutting tool for a female thread in local coordinates (mouth at z = 0, going
+    to +Z), with the same thread phase as make_stub_gen.  The plain bore goes on
+    down to z = bore_to."""
+    Ls = Lt + SOCKET_EXTRA
+    z0 = ridge_hw(P, depth) + 0.05
+    hw_a = ridge_hw(P, depth)
+    k = 0
+    while z0 - k * P > -hw_a - 0.1:             # same thread phase, but starting outside the mouth
+        k += 1
+    z0s = z0 - k * P
+    z1s = Ls - (hw_a - thread_extra(P, depth)) - 0.05
+    tool = cyl_z(R_M - depth + clr, -1.0, max(bore_to, Ls))
+    return tool.fuse(thread_ridge(R_M + clr, P, depth, z0s, z1s))
+
+
+def pen_stub(p):
+    """The pen's male stub pointing to -X, shoulder at x = 0."""
+    s = make_stub_gen(p["thread_d"] / 2.0, p["thread_pitch"], p["thread_depth"], p["thread_len"]).copy()
+    s.rotate(V(0, 0, 0), V(0, 1, 0), -90.0)     # +Z -> -X
+    return s
+
+
+def pen_socket(p, x_mouth):
+    """The pen's female socket, mouth at x = x_mouth, going to -X."""
+    t = make_socket_tool(p["thread_d"] / 2.0, p["thread_pitch"], p["thread_depth"], p["thread_len"],
+                         p["fit_clr"], p["thread_len"] + SOCKET_EXTRA).copy()
+    t.rotate(V(0, 0, 0), V(0, 1, 0), -90.0)
+    t.translate(V(x_mouth, 0, 0))
+    return t
+
+
+def flutes_z(R, z0, z1):
+    """Grip grooves along a round knob (axis Z) of radius R between z0 and z1 (a compound to cut with)."""
+    n = max(8, int(2.0 * math.pi * R / 4.0))
+    cyls = []
+    for i in range(n):
+        a = 2.0 * math.pi * i / n
+        cyls.append(Part.makeCylinder(1.0, z1 - z0, V((R + 0.2) * math.cos(a), (R + 0.2) * math.sin(a), z0),
+                                      V(0, 0, 1)))
+    return Part.makeCompound(cyls)
+
+
+def to_print(shape):
+    """Stand a part on its rear (lowest x) end, on z = 0."""
+    s = shape.copy()
+    s.rotate(V(0, 0, 0), V(0, 1, 0), -90.0)     # +X (front) -> +Z
+    s.translate(V(0, 0, -s.BoundBox.ZMin))
+    return s
+
+
+def to_print_head(shape):
+    """The spool holder lies flat: the spool axis (Y) points up, the floor of the holder is the bed side."""
+    s = shape.copy()
+    s.rotate(V(0, 0, 0), V(1, 0, 0), 90.0)      # +Y -> +Z
+    s.translate(V(0, 0, -s.BoundBox.ZMin))
+    return s
+
+
+def to_print_lid(shape):
+    """The lid lies on its knob, the thread stub pointing up."""
+    s = shape.copy()
+    s.rotate(V(0, 0, 0), V(1, 0, 0), -90.0)     # stub direction -Y -> +Z
+    s.translate(V(0, 0, -s.BoundBox.ZMin))
+    return s
+
+
+# ---------------------------------------------------------------- the pen tip
+def make_tip(p):
+    """The tip along +X.  The shoulder (where the body starts) is at x = 0, the
+    thread stub points to -X, the needle end is at x = x_end."""
+    warn = []
+    P = p["thread_pitch"]
+    depth = p["thread_depth"]
+    Lt = p["thread_len"]
+    flat = P / 2.0 - depth                      # crest flat = root flat
+    R_g = p["body_d"] / 2.0
+    tip_R = p["tip_d"] / 2.0
+    R_M = p["thread_d"] / 2.0                   # thread outer radius
+    R_m = R_M - depth                           # thread core radius
+    chan_R = p["chan_d"] / 2.0
+    seat_R = p["tube_od"] / 2.0 + p["seat_clr"]
+
+    x_base = p["base_len"]
+    x_cone = x_base + p["taper_len"]
+    x_end = x_cone + p["collar_len"]
+    x_seat = x_end - p["tube_insert"]
+    if x_seat < 0.5:
+        warn.append("The needle seat is longer than the tip, so it was shortened.")
+        x_seat = 0.5
+
+    if flat < 0.15:
+        raise ValueError("this thread depth is too big for the step (flats would be %.2f mm) - "
+                         "use a bigger step or a shallower thread" % flat)
+    check_thread(p)
+    if R_M > R_g - 0.5:
+        raise ValueError("the thread diameter must be clearly smaller than the body diameter")
+    if R_m - chan_R < 0.6:
+        raise ValueError("the wire hole is too big for the thread core (core diameter %.1f mm)" % (2 * R_m))
+    if tip_R - seat_R < 0.6:
+        raise ValueError("the tip end is too thin around the needle seat")
+
+    if flat < 0.4:
+        warn.append("Thread flats are %.2f mm - narrower than one nozzle line; use a bigger step or shallower depth." % flat)
+    if Lt < 2.5 * P:
+        warn.append("Thread length is under 2.5 turns - the joint may be weak.")
+    if R_m - chan_R < 1.2:
+        warn.append("Wall around the wire hole in the thread stub is under 1.2 mm.")
+    if chan_R > seat_R - 0.15:
+        warn.append("The wire hole is as wide as the needle seat: the tube has no shoulder to stop against.")
+    if tip_R - seat_R < 1.2:
+        warn.append("Tip end wall around the needle seat is under 1.2 mm.")
+    if tip_R > R_g:
+        warn.append("Tip end is wider than the body.")
+    overhang = R_g - R_M
+    if overhang > 2.5:
+        warn.append("Printing stub-down leaves a %.1f mm overhang at the shoulder (needs a brim/support)." % overhang)
+
+    body = cyl_x(R_g, 0.0, x_base).fuse(
+        Part.makeCone(R_g, tip_R, p["taper_len"], V(x_base, 0, 0), V(1, 0, 0))).fuse(
+        cyl_x(tip_R, x_cone, x_end))
+    tip = body.fuse(pen_stub(p))
+    tip = tip.cut(cyl_x(chan_R, -Lt - 1.0, x_end + 1.0))      # wire hole
+    tip = tip.cut(cyl_x(seat_R, x_seat, x_end + 1.0))         # needle seat
+    tip = clean(tip)
+
+    tube_id = min(p["tube_id"], p["tube_od"] - 0.2)
+    tube = cyl_x(p["tube_od"] / 2.0, x_seat, x_end + p["tube_out"]).cut(
+        cyl_x(tube_id / 2.0, x_seat - 1.0, x_end + p["tube_out"] + 1.0))
+    return dict(tip=tip, tube=tube, warn=warn, x_end=x_end, seat_d=2 * seat_R, seat_deep=x_end - x_seat)
+
+
+# ---------------------------------------------------------------- one body segment
+def make_segment(p):
+    """One segment along +X.  The rear shoulder is at x = 0, the stub points to -X
+    (x from -thread_len to 0), the front face is at x = seg_len and holds the socket."""
+    warn = []
+    P = p["thread_pitch"]
+    depth = p["thread_depth"]
+    Lt = p["thread_len"]
+    clr = p["fit_clr"]
+    L = p["seg_len"]
+    flat = P / 2.0 - depth
+    R_g = p["body_d"] / 2.0
+    R_M = p["thread_d"] / 2.0
+    R_m = R_M - depth
+    chan_R = p["chan_d"] / 2.0
+    Ls = Lt + SOCKET_EXTRA                      # socket depth
+    wall = R_g - (R_M + clr)                    # body wall around the deepest groove
+
+    if flat < 0.15:
+        raise ValueError("this thread depth is too big for the step (flats would be %.2f mm) - "
+                         "use a bigger step or a shallower thread" % flat)
+    check_thread(p)
+    if R_M > R_g - 0.5:
+        raise ValueError("the thread diameter must be clearly smaller than the body diameter")
+    if wall < 0.6:
+        raise ValueError("the body wall around the socket would be only %.2f mm - make the body wider "
+                         "or the thread smaller" % wall)
+    if R_m - chan_R < 0.6:
+        raise ValueError("the wire hole is too big for the thread core (core diameter %.1f mm)" % (2 * R_m))
+    if depth - clr < 0.15:
+        raise ValueError("the fit clearance is too big for this thread depth - the thread would not hold")
+    if L < Ls + 2.0:
+        raise ValueError("the segment is too short for its socket (needs at least %.1f mm)" % (Ls + 2.0))
+
+    if wall < 1.2:
+        warn.append("The wall around the socket is %.2f mm - under 1.2 mm it can crack; use a wider body or a smaller thread." % wall)
+    if clr < 0.1:
+        warn.append("Fit clearance under 0.1 mm: printed threads this tight usually will not turn.")
+    if depth - clr < 0.4:
+        warn.append("The thread only overlaps %.2f mm - it may slip or strip." % (depth - clr))
+
+    seg = cyl_x(R_g, 0.0, L).fuse(pen_stub(p))
+    seg = seg.cut(pen_socket(p, L))
+    seg = seg.cut(cyl_x(chan_R, -Lt - 1.0, L + 1.0))     # wire hole
+    seg = clean(seg)
+    return dict(seg=seg, warn=warn, wall=wall, flat=flat)
+
+
+# ---------------------------------------------------------------- spool holder
+def make_holder(p):
+    """The spool holder (the rear end of the pen), its lid, and a drawing of the bought spool.
+    Pen axis = X.  The front face of the holder, where the first body segment (or the tip)
+    screws in, is at x = 0; the holder reaches back from there to x = x_rear.
+    The spool axis is Y and the spool is centred ON the pen axis (looking down the spool
+    axis, the pen runs straight through the middle of the round holder).  The
+    holder is a round drum with a short round nose in front of it (a cylinder, as thick as
+    the pen body) that carries the one socket.  The wire
+    leaves the rim of the spool into a funnel in the wall of the drum and runs through the
+    pen axis channel.  The lid (a big fluted knob) screws in from +Y."""
+    warn = []
+    P = p["thread_pitch"]
+    depth = p["thread_depth"]
+    Lt = p["thread_len"]
+    clr = p["fit_clr"]
+    flat = P / 2.0 - depth
+    R_g = p["body_d"] / 2.0
+    R_M = p["thread_d"] / 2.0
+    R_s = R_M + clr                             # socket groove radius
+    Ls = Lt + SOCKET_EXTRA
+    chan_R = max(p["chan_d"] / 2.0, 1.0)        # roomy wire channel inside the holder
+    sp_R = p["spool_d"] / 2.0
+    W = p["spool_wid"]                          # width of the spool you use
+    S = max(p["spool_space"], W)                # depth of the spool space (the widest spool the holder takes)
+    pin_R = (p["spool_hole"] - 0.4) / 2.0
+    lid_Lt = p["lid_len"]
+    Ls_l = lid_Lt + SOCKET_EXTRA
+    z_stub = ridge_hw(P, depth) + 0.05
+
+    if flat < 0.15:
+        raise ValueError("this thread depth is too big for the step (flats would be %.2f mm) - "
+                         "use a bigger step or a shallower thread" % flat)
+    check_thread(p)
+    if pin_R < 0.6:
+        raise ValueError("the spool centre hole is too small for a pin (needs at least 1.6 mm)")
+    if lid_Lt - 2.0 * z_stub < 0.75 * P:
+        raise ValueError("the lid thread is too short for this step")
+    if lid_Lt < 2.5 * P:
+        warn.append("The lid thread is under 2.5 turns - the lid may be loose.")
+
+    R_ml = sp_R + 0.5                           # lid thread core radius (the spool slides through it)
+    R_Ml = R_ml + depth                         # lid thread outer radius
+    R_b = R_ml + clr                            # spool bore
+    R_h = R_Ml + clr + 1.6                      # outer radius of the round housing
+    R_k = R_h + 1.0                             # outer radius of the lid knob (it overhangs 1 mm: easy to grab)
+    knob = 6.0                                  # thickness of the lid knob
+    y_fl = -S / 2.0 - 0.3                       # floor of the spool cavity
+    y_sz = S / 2.0 + 0.3                        # top of the plain spool zone
+    y_top = y_sz + Ls_l                         # top of the holder, the lid sits here
+    y_f = min(y_fl - 2.0, -(R_g + 0.5))         # bottom of the holder (the print bed side): a 2 mm floor under the spool
+    m = R_b + 1.5 + Ls                          # spool centre to the face where a segment screws in
+    x_c = -m                                    # spool centre
+    x_rear = x_c - R_h                          # rear end of the round drum
+
+    # round housing + a short round nose in front of it (same diameter as the pen body) that carries the socket
+    housing = Part.makeCylinder(R_h, y_top - y_f, V(x_c, y_f, 0.0), V(0, 1, 0))
+    nose = Part.makeCylinder(R_g, m, V(x_c, 0.0, 0.0), V(1, 0, 0))
+    head = housing.fuse(nose)
+
+    # spool cavity with the thread for the lid (built along the lid axis, then turned into place)
+    cav = make_socket_tool(R_Ml, P, depth, lid_Lt, clr, y_top - y_fl).copy()
+    cav.rotate(V(0, 0, 0), V(1, 0, 0), 90.0)    # +Z -> -Y
+    cav.translate(V(x_c, y_top, 0.0))
+    head = head.cut(cav)
+
+    # the socket for the first segment (or the tip): mouth at x = 0, going to -X
+    sock_f = make_socket_tool(R_M, P, depth, Lt, clr, Ls).copy()
+    sock_f.rotate(V(0, 0, 0), V(0, 1, 0), -90.0)                 # +Z -> -X
+    head = head.cut(sock_f)
+
+    # wire channel + funnel (the wire leaves the spool rim into the funnel)
+    r_fun = R_s - 0.4 + 0.3
+    for sgn, x_end in ((1.0, -Ls + 0.5),):
+        x_w = x_c + sgn * R_b                   # where the cavity wall crosses the pen axis
+        x_a = x_w - sgn * 0.5
+        head = head.cut(Part.makeCylinder(chan_R, abs(x_end - x_a), V(x_a, 0, 0), V(sgn, 0, 0)))
+        if r_fun - chan_R > 0.2:
+            head = head.cut(Part.makeCone(r_fun, chan_R, r_fun - chan_R, V(x_w - sgn * 0.3, 0, 0), V(sgn, 0, 0)))
+    y_he = S / 2.0 + 0.5                        # the hub of the lid ends here (just above the widest spool)
+    e_pin = 4.5                                 # how far the top of the pin reaches into the hub of the lid
+    y_pt = y_he + e_pin                         # top of the pin
+    pin = Part.makeCylinder(pin_R, y_pt - 0.5 - (y_fl - 0.5), V(x_c, y_fl - 0.5, 0.0), V(0, 1, 0)).fuse(
+        Part.makeCone(pin_R, max(pin_R - 0.5, 0.1), 0.5, V(x_c, y_pt - 0.5, 0.0), V(0, 1, 0)))   # rounded-off top
+    head = clean(head.fuse(pin))                                 # long pin for the spool, the lid holds its top end
+
+    # lid: a thick fluted knob + the same kind of thread, screwed in from above
+    stub = make_stub_gen(R_Ml, P, depth, lid_Lt)
+    knob_s = cyl_z(R_k, -knob, 0.0).cut(flutes_z(R_k, -knob, 0.0))
+    lid = knob_s.fuse(stub).copy()
+    r_in = R_ml - 2.0                           # hollow lid, saves material: the thread is a tube with a 2 mm wall
+    R_hub = pin_R + 2.0                         # in the middle of the hollow lid a hub holds the top of the pin
+    r_hole = pin_R + 0.25                       # the hole in the hub (a little bigger than the pin)
+    z_he = y_top - y_he                         # where the hub ends (lid frame: +Z points toward the spool)
+    if r_in >= R_hub + 1.0:                     # and the knob keeps a 2 mm top plate; the hollow opens toward the
+        lid = lid.cut(cyl_z(r_in, -knob + 2.0, lid_Lt + 1.0))      # thread end, so it prints with no overhang
+        lid = lid.fuse(cyl_z(R_hub, -knob + 1.8, z_he))
+        z_m = z_he
+    else:                                       # a small spool: the lid stays solid, the pin hole is cut in the stub
+        z_m = float(lid_Lt)
+    lid = lid.cut(cyl_z(r_hole, z_m - e_pin - 0.6, z_m + 1.0))
+    lid = lid.cut(Part.makeCone(r_hole + 0.8, r_hole, 0.8, V(0, 0, z_m), V(0, 0, -1)))    # lead-in for the pin
+    lid.rotate(V(0, 0, 0), V(1, 0, 0), 90.0)    # +Z -> -Y
+    lid.translate(V(x_c, y_top, 0.0))
+    lid = clean(lid)
+
+    spool = Part.makeCylinder(sp_R, W, V(x_c, -W / 2.0, 0.0), V(0, 1, 0)).cut(
+        Part.makeCylinder(p["spool_hole"] / 2.0, W + 2.0, V(x_c, -W / 2.0 - 1.0, 0.0), V(0, 1, 0)))
+
+    if p["spool_space"] < W:
+        warn.append("The spool space (%.1f mm) is smaller than the spool (%.1f mm) - the holder uses the spool width."
+                    % (p["spool_space"], W))
+    if 2.0 * R_k > 50.0:
+        warn.append("The spool holder is %.0f mm wide - big for a pen; check the spool diameter." % (2.0 * R_k))
+    line = ("Spool holder at the rear of the pen, spool centred on the pen axis: %.0f mm long, %.0f mm wide, %.0f mm thick "
+            "printed lying flat; "
+            "the round nose overhangs a little when printed that way. The %.1f x %.1f mm spool turns on a %.1f mm pin, its top end held by the lid; the wire leaves the rim into a "
+            "funnel. The %.0f mm knob on top is the lid, unscrew it by hand."
+            % (-x_rear, 2.0 * R_k, y_top - y_f, p["spool_d"], W, 2.0 * pin_R, 2.0 * R_k))
+    if S - W > 0.6:
+        line += (" The spool space is %.1f mm deep and this spool is %.1f mm wide: put about %.1f mm of washers or "
+                 "spacers under the spool to keep it centred on the pen axis." % (S, W, (S - W) / 2.0))
+    return dict(head=head, lid=lid, spool=spool, warn=warn, x_rear=x_rear, x_c=x_c, y_top=y_top, z_c=0.0,
+                lid_len=lid_Lt, line=line)
+
+
+def layout(p, hres, gap):
+    """Position of every part in the chain (the holder's front face stays at x = 0).  X offsets are
+    numbers; the spool and the lid move along Y when the parts are spread apart: first the spool
+    lifts clear of the holder, then the lid lifts clear of the spool (half a gap between them)."""
+    L = p["seg_len"]
+    nf = int(p["n_front"])
+    s_lift = l_lift = 0.0
+    if gap > 0:
+        s_lift = hres["y_top"] - hres["spool"].BoundBox.YMin + 0.5 * gap
+        l_lift = s_lift + hres["spool"].BoundBox.YMax - hres["lid"].BoundBox.YMin + 0.5 * gap
+    pos = {"head": 0.0, "lid": V(0, l_lift, 0), "spool": V(0, s_lift, 0)}
+    for j in range(nf):
+        pos[("front", j)] = j * L + (j + 1) * gap
+    pos["tip"] = nf * L + (nf + 1) * gap
+    return pos
+
+
+def moved(shape, d):
+    s = shape.copy()
+    s.translate(d if isinstance(d, V) else V(d, 0, 0))
+    return s
+
+
+def fit_overlaps(p, tres, sres, hres):
+    """Put the parts together as they really mate; every overlap volume must be 0."""
+    L = p["seg_len"]
+    seg, tip = sres["seg"], tres["tip"]
+    head, lid, spool = hres["head"], hres["lid"], hres["spool"]
+    out = []
+    out.append(("segment in segment", seg.common(moved(seg, L)).Volume))
+    out.append(("tip in segment", seg.common(moved(tip, L)).Volume))
+    out.append(("segment in holder", head.common(seg).Volume))
+    out.append(("holder and lid", head.common(lid).Volume))
+    out.append(("spool in holder", spool.common(head).Volume + spool.common(lid).Volume))
+    return out
+
+
+# ---------------------------------------------------------------- live window
+def get_doc():
+    if DOC_NAME in App.listDocuments():
+        return App.getDocument(DOC_NAME)
+    return App.newDocument(DOC_NAME)
+
+
+def build_dialog(doc):
+    mw = Gui.getMainWindow()
+    old = mw.findChild(QtWidgets.QDialog, DIALOG_NAME)
+    if old is not None:                         # running the macro again replaces the old window
+        old.close()
+        old.deleteLater()
+
+    vals = load_saved()
+    dlg = QtWidgets.QDialog(mw)
+    dlg.setObjectName(DIALOG_NAME)
+    dlg.setWindowTitle("Jumper wire pen - full pen (live)")
+    dlg.setMinimumWidth(660)
+    lay = QtWidgets.QVBoxLayout(dlg)
+
+    tabs = QtWidgets.QTabWidget()
+    lay.addWidget(tabs)
+    forms = {}
+    spins = {}
+    for key, label, default, lo, hi, step, group in PARAMS:
+        if group not in forms:
+            page = QtWidgets.QWidget()
+            forms[group] = QtWidgets.QFormLayout(page)
+            tabs.addTab(page, group)
+        sb = QtWidgets.QDoubleSpinBox()
+        sb.setDecimals(2)
+        sb.setRange(lo, hi)
+        sb.setSingleStep(step)
+        sb.setSuffix(" mm")
+        sb.setValue(float(vals[key]))
+        forms[group].addRow(label, sb)
+        spins[key] = sb
+
+    n_front = QtWidgets.QSpinBox()
+    n_front.setRange(0, MAX_SEG)
+    n_front.setValue(int(vals["n_front"]))
+    forms["Body"].addRow("Number of body segments (between the spool holder and the tip)", n_front)
+
+    # View tab
+    view_page = QtWidgets.QWidget()
+    tabs.addTab(view_page, "View")
+    vform = QtWidgets.QFormLayout(view_page)
+    chk_tube = QtWidgets.QCheckBox("Show the needle tube (bought part)")
+    chk_tube.setChecked(bool(vals["show_tube"]))
+    chk_spread = QtWidgets.QCheckBox("Exploded view: spread the parts apart (to see each stub and socket)")
+    chk_spread.setChecked(bool(vals["spread"]))
+    chk_cut = QtWidgets.QCheckBox("Cut through the middle (to see the inside)")
+    chk_cut.setChecked(bool(vals["cut"]))
+    chk_print = QtWidgets.QCheckBox("Show one part in print orientation")
+    chk_print.setChecked(bool(vals["print_view"]))
+    part_box = QtWidgets.QComboBox()
+    part_box.addItems(PART_NAMES)
+    part_box.setCurrentIndex(int(vals["print_part"]))
+    for w in (chk_tube, chk_spread, chk_cut, chk_print):
+        vform.addRow(w)
+    vform.addRow("Part to show for printing", part_box)
+
+    # Colors tab
+    colors, alt0 = load_colors()
+    color_page = QtWidgets.QWidget()
+    tabs.addTab(color_page, "Colors")
+    cform = QtWidgets.QFormLayout(color_page)
+    color_btns = {}
+    for key, label, _c in COLOR_ITEMS:
+        btn = QtWidgets.QPushButton()
+        btn.setMinimumWidth(110)
+        cform.addRow(label, btn)
+        color_btns[key] = btn
+    chk_alt = QtWidgets.QCheckBox("Make every second body segment a bit darker")
+    chk_alt.setChecked(alt0)
+    cform.addRow(chk_alt)
+    b_colors = QtWidgets.QPushButton("Reset colors")
+    cform.addRow(b_colors)
+
+    status = QtWidgets.QLabel("")
+    status.setWordWrap(True)
+    lay.addWidget(status)
+
+    b_check = QtWidgets.QPushButton("Check fit")
+    b_reset = QtWidgets.QPushButton("Reset sizes")
+    b_fit = QtWidgets.QPushButton("Fit view")
+    b_close = QtWidgets.QPushButton("Close")
+    row = QtWidgets.QHBoxLayout()
+    for b in (b_check, b_reset, b_fit):
+        row.addWidget(b)
+    row.addStretch(1)
+    row.addWidget(b_close)
+    lay.addLayout(row)
+
+    # ---- small cache: a part is only rebuilt when one of its own sizes changed
+    cache = {}
+
+    def cached(name, keys, p, fn):
+        key = tuple(round(float(p[k]), 6) for k in keys)
+        hit = cache.get(name)
+        if hit is not None and hit[0] == key:
+            return hit[1]
+        res = fn(p)
+        cache[name] = (key, res)
+        return res
+
+    def tip_res(p):
+        return cached("tip", TIP_KEYS, p, make_tip)
+
+    def seg_res(p):
+        return cached("seg", SEG_KEYS, p, make_segment)
+
+    def holder_res(p):
+        return cached("holder", HEAD_KEYS, p, make_holder)
+
+    def collect():
+        p = dict((k, sb.value()) for k, sb in spins.items())
+        p["n_front"] = n_front.value()
+        p["show_tube"] = chk_tube.isChecked()
+        p["spread"] = chk_spread.isChecked()
+        p["cut"] = chk_cut.isChecked()
+        p["print_view"] = chk_print.isChecked()
+        p["print_part"] = part_box.currentIndex()
+        return p
+
+    def seg_color(j):
+        c = colors["seg"]
+        if chk_alt.isChecked() and j % 2 == 1:
+            return tuple(v * 0.88 for v in c)
+        return c
+
+    def object_color(name):
+        if name in OBJ_COLOR_KEY:
+            return colors[OBJ_COLOR_KEY[name]]
+        if name == "BodySegment":
+            return seg_color(0)
+        if name.startswith("FrontSegment_"):
+            return seg_color(int(name.split("_")[1]) - 1)
+        return None
+
+    def apply_colors():
+        """Paint the parts in the 3D view with the chosen colors (no rebuild needed)."""
+        try:
+            for o in doc.Objects:
+                c = object_color(o.Name)
+                if c is not None:
+                    o.ViewObject.ShapeColor = c
+        except Exception:
+            pass
+
+    def paint_button(key):
+        c = colors[key]
+        dark = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2] < 0.55
+        color_btns[key].setText(rgb_to_hex(c).upper())
+        color_btns[key].setStyleSheet("background-color: %s; color: %s; border: 1px solid #555; padding: 4px 10px;"
+                                      % (rgb_to_hex(c), "#ffffff" if dark else "#000000"))
+
+    def set_color(key, rgb):
+        colors[key] = tuple(rgb)
+        paint_button(key)
+        save_colors(colors, chk_alt.isChecked())
+        apply_colors()
+
+    def pick_color(key):
+        c = colors[key]
+        chosen = QtWidgets.QColorDialog.getColor(QtGui.QColor.fromRgbF(c[0], c[1], c[2]), dlg,
+                                                 "Color of: " + COLOR_LABELS[key])
+        if chosen.isValid():
+            set_color(key, (chosen.redF(), chosen.greenF(), chosen.blueF()))
+
+    def reset_colors():
+        for k, _label, c in COLOR_ITEMS:
+            colors[k] = c
+            paint_button(k)
+        chk_alt.setChecked(True)
+        save_colors(colors, True)
+        apply_colors()
+
+    for k in color_btns:
+        paint_button(k)
+        color_btns[k].clicked.connect(lambda *_a, kk=k: pick_color(kk))
+    b_colors.clicked.connect(reset_colors)
+    chk_alt.toggled.connect(lambda *_a: (save_colors(colors, chk_alt.isChecked()), apply_colors()))
+
+    def show_objects(wanted):
+        """wanted: list of (object name, shape, color).  Everything else is removed."""
+        names = set(w[0] for w in wanted)
+        for o in list(doc.Objects):
+            if o.Name not in names:
+                doc.removeObject(o.Name)
+        for name, shape, color in wanted:
+            o = doc.getObject(name)
+            if o is None:
+                o = doc.addObject("Part::Feature", name)
+            o.Shape = shape
+            try:
+                o.ViewObject.ShapeColor = color
+                if name.endswith("_preview"):
+                    o.ViewObject.Transparency = 55
+            except Exception:
+                pass
+        doc.recompute()
+
+    def fit_view():
+        try:
+            Gui.ActiveDocument = Gui.getDocument(doc.Name)
+            Gui.ActiveDocument.ActiveView.viewIsometric()
+            Gui.SendMsgToActiveView("ViewFit")
+        except Exception:
+            pass
+
+    def say(text, bad=False):
+        status.setStyleSheet("color: #b03a2e;" if bad else "")
+        status.setText(text)
+
+    def half_of(name, keys, p, shape):
+        """The y >= 0 half of a part (the y < 0 half is removed, so the cut face looks at us)."""
+        def fn(_p):
+            bb = shape.BoundBox
+            box = Part.makeBox(bb.XLength + 10.0, 120.0, 240.0, V(bb.XMin - 5.0, -120.0, -120.0))
+            return shape.cut(box)
+        return cached(name + "_half", keys, p, fn)
+
+    def rebuild(fit=False):
+        p = collect()
+        try:
+            sres = seg_res(p)
+            tres = tip_res(p)
+            hres = holder_res(p)
+            parts = (("segment", sres["seg"]), ("tip", tres["tip"]),
+                     ("spool holder", hres["head"]), ("spool holder lid", hres["lid"]))
+            for nm, sh in parts:
+                if (not sh.isValid()) or len(sh.Solids) != 1 or sh.Volume <= 0:
+                    raise RuntimeError("the %s came out invalid - try slightly different values" % nm)
+        except Exception as e:
+            say("Not updated: %s" % e, True)
+            return False
+        try:
+            seg, tip, head, lid = sres["seg"], tres["tip"], hres["head"], hres["lid"]
+            nf = int(p["n_front"])
+            L = p["seg_len"]
+            x_end = tres["x_end"]
+            if p["print_view"]:
+                pp = p["print_part"]
+                if pp == 0:
+                    wanted = [("PenTip", to_print(tip), colors["tip"])]
+                elif pp == 1:
+                    wanted = [("BodySegment", to_print(seg), seg_color(0))]
+                elif pp == 2:
+                    wanted = [("SpoolHolder", to_print_head(head), colors["head"])]
+                else:
+                    wanted = [("SpoolLid", to_print_lid(lid), colors["lid"])]
+            else:
+                gap = SPREAD_GAP if p["spread"] else 0.0
+                tip_s, tube_s, seg_s = tip, tres["tube"], seg
+                head_s, lid_s, spool_s = head, lid, hres["spool"]
+                if p["cut"]:
+                    tip_s = half_of("tip", TIP_KEYS, p, tip)
+                    tube_s = half_of("tube", TIP_KEYS, p, tres["tube"])
+                    seg_s = half_of("seg", SEG_KEYS, p, seg)
+                    head_s = half_of("head", HEAD_KEYS, p, head)
+                    lid_s = half_of("lid", HEAD_KEYS, p, lid)
+                    spool_s = half_of("spool", HEAD_KEYS, p, hres["spool"])
+                pos = layout(p, hres, gap)
+                wanted = []
+                for j in range(nf):
+                    wanted.append(("FrontSegment_%d" % (j + 1), moved(seg_s, pos[("front", j)]), seg_color(j)))
+                wanted.append(("PenTip", moved(tip_s, pos["tip"]), colors["tip"]))
+                if p["show_tube"]:
+                    wanted.append(("NeedleTube_buy", moved(tube_s, pos["tip"]), colors["tube"]))
+                wanted.append(("SpoolHolder", moved(head_s, pos["head"]), colors["head"]))
+                wanted.append(("SpoolLid", moved(lid_s, pos["lid"]), colors["lid"]))
+                wanted.append(("BoughtSpool_preview", moved(spool_s, pos["spool"]), colors["spool"]))
+            show_objects(wanted)
+        except ReferenceError:
+            say("The document was closed - run the macro again.", True)
+            return False
+        save_values(p)
+
+        P = p["thread_pitch"]
+        depth = p["thread_depth"]
+        total = nf * L + x_end - hres["x_rear"]
+        lines = [
+            "Pen: tip %.0f mm + %d segments + spool holder %.0f mm "
+            "(segments %.0f mm each) = %.0f mm long."
+            % (x_end, nf, -hres["x_rear"], L, total),
+            "Thread: outer diameter %.1f mm, step %.2f mm, depth %.2f mm, 45-degree flanks, "
+            "flat crest and root %.2f mm wide." % (p["thread_d"], P, depth, sres["flat"]),
+            "Fit: sockets are %.2f mm bigger than the stubs on every side, thread overlap %.2f mm, "
+            "wall around a socket %.2f mm." % (p["fit_clr"], depth - p["fit_clr"], sres["wall"]),
+            ("Wire hole %.2f mm through the pen. Needle seat %.2f mm, %.1f mm deep; tube sticks out %.1f mm."
+             % (p["chan_d"], tres["seat_d"], tres["seat_deep"], p["tube_out"]))
+            if tres["seat_deep"] >= 0.05 else
+            ("Wire hole %.2f mm through the pen. No needle seat (depth 0): the tube sits on the end face of the "
+             "tip, glue it there; it sticks out %.1f mm." % (p["chan_d"], p["tube_out"])),
+            hres["line"],
+        ]
+        warns = []
+        for w in tres["warn"] + sres["warn"] + hres["warn"]:
+            if w not in warns:
+                warns.append(w)
+        text = "\n".join(lines)
+        if warns:
+            text += "\n\nWARNING:\n- " + "\n- ".join(warns)
+        say(text, bool(warns))
+        if fit:
+            fit_view()
+        return True
+
+    timer = QtCore.QTimer(dlg)
+    timer.setSingleShot(True)
+    timer.setInterval(300)
+    timer.timeout.connect(lambda: rebuild())
+
+    def changed(*_a):
+        timer.start()
+
+    for sb in spins.values():
+        sb.valueChanged.connect(changed)
+    n_front.valueChanged.connect(changed)
+    chk_tube.toggled.connect(changed)
+    part_box.currentIndexChanged.connect(changed)
+    for chk in (chk_spread, chk_cut, chk_print):
+        chk.toggled.connect(lambda *_a: (timer.stop(), rebuild(True)))
+
+    def reset():
+        d = defaults()
+        for k, sb in spins.items():
+            sb.setValue(d[k])
+        n_front.setValue(d["n_front"])
+        chk_tube.setChecked(d["show_tube"])
+        chk_spread.setChecked(d["spread"])
+        chk_cut.setChecked(d["cut"])
+        chk_print.setChecked(d["print_view"])
+        part_box.setCurrentIndex(d["print_part"])
+
+    def run_check():
+        p = collect()
+        say("Checking how all the threads fit - this can take up to a minute, please wait...")
+        QtWidgets.QApplication.processEvents()
+        try:
+            res = fit_overlaps(p, tip_res(p), seg_res(p), holder_res(p))
+        except Exception as e:
+            say("Cannot check: %s" % e, True)
+            return
+        bad = [(n, v) for n, v in res if v >= 0.5]
+        if not bad:
+            say("Fit check OK - every joint has 0 overlap: " + ", ".join(n for n, _v in res) + ".")
+        else:
+            say("Fit check FAILED - overlap (mm3): " + ", ".join("%s %.1f" % (n, v) for n, v in bad)
+                + ". These parts would collide.", True)
+
+    b_check.clicked.connect(run_check)
+    b_reset.clicked.connect(reset)
+    b_fit.clicked.connect(fit_view)
+    b_close.clicked.connect(dlg.close)
+
+    dlg.show()
+    rebuild(True)
+    return dict(dlg=dlg, spins=spins, n_front=n_front, timer=timer, rebuild=rebuild,
+                collect=collect, status=status, chk_tube=chk_tube, chk_spread=chk_spread, chk_cut=chk_cut,
+                chk_print=chk_print, part_box=part_box, doc=doc, reset=reset, tabs=tabs,
+                tip_res=tip_res, seg_res=seg_res, holder_res=holder_res,
+                colors=colors, color_btns=color_btns, chk_alt=chk_alt, set_color=set_color,
+                reset_colors=reset_colors, apply_colors=apply_colors)
+
+
+def main():
+    return build_dialog(get_doc())
+
+
+_CTRL = main()
