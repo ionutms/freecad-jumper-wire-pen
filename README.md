@@ -20,14 +20,14 @@ open next to the 3D view, and the model rebuilds a moment after you change a num
 | # | Part | Printed or bought | What it does |
 | --- | --- | --- | --- |
 | 1 | Spool holder | printed | Round drum at the rear of the pen. The spool lies on its side inside, on a pin, centred on the pen axis. One threaded socket at the front takes the first body segment (or the tip). |
-| 2 | Spool | bought | Not printed. The default size is 18 mm across, 6.4 mm wide, with a 3.3 mm centre hole. |
+| 2 | Spool | bought | Not printed. The defaults are set for the Donau LD10-MIX spools: 30 mm across, 13 mm wide, centre hole 8 mm. |
 | 3 | Spool holder lid | printed | The big round knob on top. It screws on and off by hand. Its hub holds the top end of the pin. Mostly hollow, to save plastic. |
 | 4 | Body segment | printed | All segments are identical: a threaded stub at one end, a threaded socket at the other. Use 0 to 6 of them to set the length of the pen. |
 | 5 | Pen tip | printed | The tapered nose. It holds the needle tube. |
 | 6 | Needle tube | bought | Not printed. The default is 1.6 mm outside diameter, 0.6 mm inside, 25 mm sticking out of the tip. |
 
 The wire leaves the rim of the spool into a funnel, runs along the pen through a 1 mm hole in every part and comes out of the needle tube.
-Put together with the default sizes and one body segment, the pen is 80 mm long.
+Put together with the default sizes and 4 body segments, the pen is 152 mm long.
 
 ![Cut through the middle of the pen](images/section_iso.png)
 
@@ -70,7 +70,7 @@ minute). **Reset sizes** puts all sizes and view options back to their defaults.
 | --- | --- | --- |
 | Body diameter (tip, segments, holder nose) | 9 mm | 6 to 30 mm |
 | Segment length (shoulder to front face) | 20 mm | 6 to 60 mm |
-| Number of body segments (between the spool holder and the tip) | 1 | 0 to 6 |
+| Number of body segments (between the spool holder and the tip) | 4 | 0 to 6 |
 
 The body diameter is shared by the tip, the segments and the nose of the spool holder.
 
@@ -112,15 +112,17 @@ Set the tube depth to 0 for a tip without a seat: the tube then sits on the end 
 
 | Setting | Default | Range |
 | --- | --- | --- |
-| Spool outer diameter (widest part) | 18 mm | 8 to 60 mm |
-| Spool total width (the spool you use now) | 6.4 mm | 2 to 30 mm |
-| Spool space: how deep the holder is cut (the widest spool it takes) | 12 mm | 2 to 40 mm |
-| Spool center hole diameter (the pin inside is a bit thinner) | 3.3 mm | 1 to 15 mm |
+| Spool outer diameter (widest part) | 30 mm | 8 to 60 mm |
+| Spool total width (the spool you use now) | 13 mm | 2 to 30 mm |
+| Spool space: how deep the holder is cut (the widest spool it takes) | 13 mm | 2 to 40 mm |
+| Spool center hole diameter (the pin inside is a bit thinner) | 8 mm | 1 to 15 mm |
 | Lid thread length (the lid you open by hand) | 7 mm | 3 to 16 mm |
 
 *Spool space* sets how deep the holder is cut, so it decides the widest spool the holder takes. *Spool total width* is the spool you
 use now. If your spool is narrower than the space, the text under the tabs tells you how many millimetres of washers or spacers to put
 under it to keep it centred on the pen axis.
+
+The defaults are set for the Donau LD10-MIX spools. At these sizes the spool holder is the biggest part of the pen: 44 mm long, 36 mm wide and 23 mm thick, and 38 mm across the lid knob.
 
 The lid has one setting of its own, the lid thread length. The lid thread is sized from the spool diameter, and its step, depth and
 clearance are the shared thread settings. The holder length depends on the thread length of the body, because the first body segment
@@ -148,18 +150,31 @@ Click a color to change the display color of a part. Optionally every second bod
 The pictures are not to scale. The pen tip and the body segments stand on their thread stub. The spool holder lies flat with the spool axis pointing up.
 The lid lies on its knob with the thread pointing up. Because the holder lies flat, its round nose overhangs a little when printed that way.
 
-To get a file for the slicer:
+To get a file for the slicer at other sizes:
 
 1. In the **View** tab, tick **Show one part in print orientation** and pick the part.
 2. Select that part in the FreeCAD model tree.
 3. Choose **File > Export...** and save it as an STL file.
 
-Print one tip, one holder, one lid and as many segments as you set in the **Body** tab.
+Print one tip, one holder, one lid and as many segments as you set in the **Body** tab (4 at the defaults).
+
+## STEP files
+
+The `models/` folder has a STEP file for each printed part, made at the default sizes and turned the way the part is printed (see the picture in the Printing section).
+
+| File | Part | How many to print | Size when printed (mm) |
+| --- | --- | --- | --- |
+| `models/pen_tip.step` | Pen tip | 1 | 9 x 9 x 36 |
+| `models/body_segment.step` | Body segment | 4 | 9 x 9 x 28 |
+| `models/spool_holder.step` | Spool holder | 1 | 43.8 x 36.1 x 23.1 |
+| `models/spool_holder_lid.step` | Spool holder lid | 1 | 38.1 x 38.1 x 13.3 |
+
+Many slicers (PrusaSlicer, for example) open STEP files directly; for other slicers, convert the file to STL. These files only fit the default sizes. For other sizes, run the macro and export the parts as described above.
 
 ## Shopping list
 
 * Needle tube (default 1.6 mm outside diameter, 0.6 mm inside; change the sizes in the **Holes and needle** tab if yours differ).
-* A spool of very thin enamelled wire (0.02 to 0.1 mm) that fits the holder (default 18 mm across, 6.4 mm wide, 3.3 mm centre hole; set your spool in the **Spool holder** tab).
+* A spool of very thin enamelled wire (0.02 to 0.1 mm). The defaults are set for the Donau LD10-MIX set (seven spools of 0.10 mm wire, 10 m each): 30 mm across, 13 mm wide, centre hole 8 mm. Measure your own spool with calipers and set its sizes in the **Spool holder** tab if it differs.
 * Optional: washers or spacers for a spool that is narrower than the spool space.
 
 ## Known limits
@@ -174,4 +189,10 @@ Print one tip, one holder, one lid and as many segments as you set in the **Body
 | File | What it is |
 | --- | --- |
 | `jumper_wire_pen_assembly.FCMacro` | The macro. It is the only file you need to build the pen. |
+| `models/` | STEP files of the four printed parts at the default sizes. |
 | `images/` | The pictures used in this README. |
+| `LICENSE` | The MIT license. |
+
+## License
+
+MIT License. See [LICENSE](LICENSE).

@@ -73,10 +73,11 @@ PARAMS = [
     ("tube_id",      "Needle tube inner diameter (preview only)",    0.6,  0.2,   5.0, 0.05, "Holes and needle"),
     ("tube_insert",  "Tube depth inside the tip (0 = no seat, the tube sits on the end face)", 10.0,  0.0,  40.0, 1.0,  "Holes and needle"),
     ("tube_out",     "Tube length sticking out",                    25.0,  5.0,  60.0, 1.0,  "Holes and needle"),
-    ("spool_d",      "Spool outer diameter (widest part)",          18.0,  8.0,  60.0, 0.5,  "Spool holder"),
-    ("spool_wid",    "Spool total width (the spool you use now)",    6.4,  2.0,  30.0, 0.1,  "Spool holder"),
-    ("spool_space",  "Spool space: how deep the holder is cut (the widest spool it takes)", 12.0,  2.0,  40.0, 0.5,  "Spool holder"),
-    ("spool_hole",   "Spool center hole diameter (the pin inside is a bit thinner)",    3.3,  1.0,  15.0, 0.1,  "Spool holder"),
+    # spool defaults: Donau LD10-MIX spools (30 mm across the flanges, 13 mm wide, 8 mm centre hole)
+    ("spool_d",      "Spool outer diameter (widest part)",          30.0,  8.0,  60.0, 0.5,  "Spool holder"),
+    ("spool_wid",    "Spool total width (the spool you use now)",   13.0,  2.0,  30.0, 0.1,  "Spool holder"),
+    ("spool_space",  "Spool space: how deep the holder is cut (the widest spool it takes)", 13.0,  2.0,  40.0, 0.5,  "Spool holder"),
+    ("spool_hole",   "Spool center hole diameter (the pin inside is a bit thinner)",    8.0,  1.0,  15.0, 0.1,  "Spool holder"),
     ("lid_len",      "Lid thread length (the lid you open by hand)",   7.0,  3.0,  16.0, 0.5,  "Spool holder"),
 ]
 TIP_KEYS = ("body_d", "base_len", "taper_len", "tip_d", "collar_len", "thread_d", "thread_pitch",
@@ -88,7 +89,7 @@ HEAD_KEYS = ("body_d", "chan_d", "thread_d", "thread_pitch", "thread_depth", "th
 
 def defaults():
     d = dict((p[0], p[2]) for p in PARAMS)
-    d["n_front"] = 1
+    d["n_front"] = 4
     d["show_tube"] = True
     d["spread"] = False
     d["cut"] = False
@@ -129,7 +130,7 @@ def load_saved():
             return d
         for p in PARAMS:
             d[p[0]] = clamp_param(p, pg.GetFloat(p[0], p[2]))
-        d["n_front"] = min(max(pg.GetInt("n_front", 1), 0), MAX_SEG)
+        d["n_front"] = min(max(pg.GetInt("n_front", d["n_front"]), 0), MAX_SEG)
         d["show_tube"] = pg.GetBool("show_tube", True)
         d["spread"] = pg.GetBool("spread", False)
         d["cut"] = pg.GetBool("cut", False)
