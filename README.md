@@ -20,14 +20,14 @@ open next to the 3D view, and the model rebuilds a moment after you change a num
 | # | Part | Printed or bought | What it does |
 | --- | --- | --- | --- |
 | 1 | Spool holder | printed | Round drum at the rear of the pen. The spool lies on its side inside, on a pin, centred on the pen axis. One threaded socket at the front takes the first body segment (or the tip). |
-| 2 | Spool | bought | Not printed. The defaults are set for the Donau LD10-MIX spools: 30 mm across, 13 mm wide, centre hole 8 mm. |
+| 2 | Spool | bought | Not printed. The defaults are set for a small spool: 21 mm across, 12 mm wide, centre hole 6 mm. |
 | 3 | Spool holder lid | printed | The big round knob on top. It screws on and off by hand. Its hub holds the top end of the pin. Mostly hollow, to save plastic. |
 | 4 | Body segment | printed | All segments are identical: a threaded stub at one end, a threaded socket at the other. Use 0 to 6 of them to set the length of the pen. |
 | 5 | Pen tip | printed | The tapered nose. It holds the needle tube. |
 | 6 | Needle tube | bought | Not printed. The default is 1.6 mm outside diameter, 0.6 mm inside, 25 mm sticking out of the tip. |
 
-The wire leaves the rim of the spool into a funnel, runs along the pen through a 1 mm hole in every part and comes out of the needle tube.
-Put together with the default sizes and 4 body segments, the pen is 152 mm long.
+The wire leaves the rim of the spool into a funnel, runs along the pen through a 1.5 mm hole in every part and comes out of the needle tube.
+Put together with the default sizes and 4 body segments, the pen is 143 mm long.
 
 ![Cut through the middle of the pen](images/section_iso.png)
 
@@ -85,11 +85,20 @@ The body diameter is shared by the tip, the segments and the nose of the spool h
 | Thread depth | 0.75 mm | 0.3 to 2.5 mm |
 | Thread length (stub length) | 8 mm | 4 to 24 mm |
 | Fit clearance (socket bigger, each side) | 0.2 mm | 0 to 0.6 mm |
+| Lead-in chamfer (stub ends and socket mouths, 0 = none) | 0.5 mm | 0 to 1.5 mm |
+| Chamfer at the foot of the thread stub (where it meets the shoulder, 0 = none) | 0.75 mm | 0 to 1.5 mm |
 
 The thread is shared by every part, so the parts always fit each other. It is made for FDM printing: a coarse step,
 45-degree flanks (no flat overhangs), and flat crests and roots that are wider than one nozzle line (0.50 mm at the defaults).
 The sockets are bigger than the stubs by the fit clearance on every side. If the threads bind or wobble on your printer, change that clearance.
 If you change any thread setting, reprint all the parts, not just one.
+
+Two small chamfers make the printed threads easier to use. The *lead-in chamfer* (0.5 mm) bevels the end of every
+thread stub and opens every socket mouth with a matching 45-degree countersink. The parts start easily, and the squashed first layer
+of a stub (it prints standing on the bed) no longer catches. The *foot chamfer* (0.75 mm) is a 45-degree slope where
+the stub meets the shoulder, which makes the stub stronger. It sits inside the countersink of the socket, so the flat shoulder ring
+still seats against the front face of the next part. Set either to 0 for a sharp edge. The foot chamfer is limited automatically
+to the room the socket leaves for it.
 
 ### Holes and needle
 
@@ -97,7 +106,7 @@ If you change any thread setting, reprint all the parts, not just one.
 
 | Setting | Default | Range |
 | --- | --- | --- |
-| Wire hole diameter (through the whole pen) | 1 mm | 0.3 to 6 mm |
+| Wire hole diameter (through the whole pen) | 1.5 mm | 0.3 to 6 mm |
 | Needle tube outer diameter | 1.6 mm | 0.6 to 6 mm |
 | Needle seat clearance (each side) | 0.05 mm | 0 to 0.5 mm |
 | Needle tube inner diameter (preview only) | 0.6 mm | 0.2 to 5 mm |
@@ -106,23 +115,32 @@ If you change any thread setting, reprint all the parts, not just one.
 
 Set the tube depth to 0 for a tip without a seat: the tube then sits on the end face of the tip, and you glue it there.
 
+If the wire hole is almost as wide as the needle seat (as it is at the defaults, with a 1.5 mm hole and a
+1.6 mm needle), the tube would have almost no shoulder to stop against. In that case the wire hole narrows with a
+45-degree cone to a short neck just behind the seat, so the needle always has a shoulder. The text under the tabs reports the neck size.
+
 ### Spool holder
 
 <img src="images/tab_5_spool_holder.png" alt="Spool holder tab" width="640">
 
 | Setting | Default | Range |
 | --- | --- | --- |
-| Spool outer diameter (widest part) | 30 mm | 8 to 60 mm |
-| Spool total width (the spool you use now) | 13 mm | 2 to 30 mm |
-| Spool space: how deep the holder is cut (the widest spool it takes) | 13 mm | 2 to 40 mm |
-| Spool center hole diameter (the pin inside is a bit thinner) | 8 mm | 1 to 15 mm |
+| Spool outer diameter (widest part) | 21 mm | 8 to 60 mm |
+| Spool total width (the spool you use now) | 12 mm | 2 to 30 mm |
+| Spool space: how deep the holder is cut (the widest spool it takes) | 12 mm | 2 to 40 mm |
+| Spool center hole diameter (the pin inside is a bit thinner) | 6 mm | 1 to 15 mm |
+| Spool clearance (extra room around the spool and its pin, for printing tolerance) | 0.8 mm | 0 to 2 mm |
 | Lid thread length (the lid you open by hand) | 7 mm | 3 to 16 mm |
 
 *Spool space* sets how deep the holder is cut, so it decides the widest spool the holder takes. *Spool total width* is the spool you
 use now. If your spool is narrower than the space, the text under the tabs tells you how many millimetres of washers or spacers to put
 under it to keep it centred on the pen axis.
 
-The defaults are set for the Donau LD10-MIX spools. At these sizes the spool holder is the biggest part of the pen: 44 mm long, 36 mm wide and 23 mm thick, and 38 mm across the lid knob.
+*Spool clearance* (0.8 mm by default) is extra room for printing tolerance, so that the spool still fits a printed holder. It leaves
+1 mm of free space around the rim of the spool, 0.6 mm of play above and below it, and makes the pin 0.8 mm thinner
+than the centre hole of the spool. Raise it if your spool is tight, lower it if the spool wobbles too much.
+
+The defaults are set for a small spool (21 mm across, 12 mm wide, centre hole 6 mm). At these sizes the spool holder is the biggest part of the pen: 35 mm long, 28 mm wide and 23 mm thick, and 30 mm across the lid knob.
 
 The lid has one setting of its own, the lid thread length. The lid thread is sized from the spool diameter, and its step, depth and
 clearance are the shared thread settings. The holder length depends on the thread length of the body, because the first body segment
@@ -166,15 +184,15 @@ The `models/` folder has a STEP file for each printed part, made at the default 
 | --- | --- | --- | --- |
 | `models/pen_tip.step` | Pen tip | 1 | 9 x 9 x 36 |
 | `models/body_segment.step` | Body segment | 4 | 9 x 9 x 28 |
-| `models/spool_holder.step` | Spool holder | 1 | 43.8 x 36.1 x 23.1 |
-| `models/spool_holder_lid.step` | Spool holder lid | 1 | 38.1 x 38.1 x 13.3 |
+| `models/spool_holder.step` | Spool holder | 1 | 35.4 x 27.7 x 22.7 |
+| `models/spool_holder_lid.step` | Spool holder lid | 1 | 29.7 x 29.7 x 13.3 |
 
 Many slicers (PrusaSlicer, for example) open STEP files directly; for other slicers, convert the file to STL. These files only fit the default sizes. For other sizes, run the macro and export the parts as described above.
 
 ## Shopping list
 
 * Needle tube (default 1.6 mm outside diameter, 0.6 mm inside; change the sizes in the **Holes and needle** tab if yours differ).
-* A spool of very thin enamelled wire (0.02 to 0.1 mm). The defaults are set for the Donau LD10-MIX set (seven spools of 0.10 mm wire, 10 m each): 30 mm across, 13 mm wide, centre hole 8 mm. Measure your own spool with calipers and set its sizes in the **Spool holder** tab if it differs.
+* A spool of very thin enamelled wire (0.02 to 0.1 mm). The defaults are set for a small spool: 21 mm across, 12 mm wide, centre hole 6 mm. Measure your own spool with calipers and set its sizes in the **Spool holder** tab if it differs.
 * Optional: washers or spacers for a spool that is narrower than the spool space.
 
 ## Known limits

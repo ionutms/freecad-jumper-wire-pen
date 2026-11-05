@@ -67,24 +67,27 @@ PARAMS = [
     ("thread_depth", "Thread depth",                                0.75,  0.3,   2.5, 0.05, "Thread"),
     ("thread_len",   "Thread length (stub length)",                  8.0,  4.0,  24.0, 0.5,  "Thread"),
     ("fit_clr",      "Fit clearance (socket bigger, each side)",     0.2,  0.0,   0.6, 0.05, "Thread"),
-    ("chan_d",       "Wire hole diameter (through the whole pen)",   1.0,  0.3,   6.0, 0.1,  "Holes and needle"),
+    ("thread_ch",    "Lead-in chamfer (stub ends and socket mouths, 0 = none)", 0.5,  0.0,   1.5, 0.1,  "Thread"),
+    ("root_ch",      "Chamfer at the foot of the thread stub (where it meets the shoulder, 0 = none)", 0.75,  0.0,   1.5, 0.05, "Thread"),
+    ("chan_d",       "Wire hole diameter (through the whole pen)",   1.5,  0.3,   6.0, 0.1,  "Holes and needle"),
     ("tube_od",      "Needle tube outer diameter",                   1.6,  0.6,   6.0, 0.05, "Holes and needle"),
     ("seat_clr",     "Needle seat clearance (each side)",           0.05,  0.0,   0.5, 0.01, "Holes and needle"),
     ("tube_id",      "Needle tube inner diameter (preview only)",    0.6,  0.2,   5.0, 0.05, "Holes and needle"),
     ("tube_insert",  "Tube depth inside the tip (0 = no seat, the tube sits on the end face)", 10.0,  0.0,  40.0, 1.0,  "Holes and needle"),
     ("tube_out",     "Tube length sticking out",                    25.0,  5.0,  60.0, 1.0,  "Holes and needle"),
-    # spool defaults: Donau LD10-MIX spools (30 mm across the flanges, 13 mm wide, 8 mm centre hole)
-    ("spool_d",      "Spool outer diameter (widest part)",          30.0,  8.0,  60.0, 0.5,  "Spool holder"),
-    ("spool_wid",    "Spool total width (the spool you use now)",   13.0,  2.0,  30.0, 0.1,  "Spool holder"),
-    ("spool_space",  "Spool space: how deep the holder is cut (the widest spool it takes)", 13.0,  2.0,  40.0, 0.5,  "Spool holder"),
-    ("spool_hole",   "Spool center hole diameter (the pin inside is a bit thinner)",    8.0,  1.0,  15.0, 0.1,  "Spool holder"),
+    # spool defaults: a small spool (21 mm across the flanges, 12 mm wide, 6 mm centre hole)
+    ("spool_d",      "Spool outer diameter (widest part)",          21.0,  8.0,  60.0, 0.5,  "Spool holder"),
+    ("spool_wid",    "Spool total width (the spool you use now)",   12.0,  2.0,  30.0, 0.1,  "Spool holder"),
+    ("spool_space",  "Spool space: how deep the holder is cut (the widest spool it takes)", 12.0,  2.0,  40.0, 0.5,  "Spool holder"),
+    ("spool_hole",   "Spool center hole diameter (the pin inside is a bit thinner)",    6.0,  1.0,  15.0, 0.1,  "Spool holder"),
+    ("spool_clr",    "Spool clearance (extra room around the spool and its pin, for printing tolerance)", 0.8,  0.0,  2.0,  0.1,  "Spool holder"),
     ("lid_len",      "Lid thread length (the lid you open by hand)",   7.0,  3.0,  16.0, 0.5,  "Spool holder"),
 ]
 TIP_KEYS = ("body_d", "base_len", "taper_len", "tip_d", "collar_len", "thread_d", "thread_pitch",
-            "thread_depth", "thread_len", "chan_d", "tube_od", "seat_clr", "tube_id", "tube_insert", "tube_out")
-SEG_KEYS = ("seg_len", "body_d", "chan_d", "thread_d", "thread_pitch", "thread_depth", "thread_len", "fit_clr")
-HEAD_KEYS = ("body_d", "chan_d", "thread_d", "thread_pitch", "thread_depth", "thread_len", "fit_clr",
-             "spool_d", "spool_wid", "spool_space", "spool_hole", "lid_len")
+            "thread_depth", "thread_len", "thread_ch", "root_ch", "chan_d", "tube_od", "seat_clr", "tube_id", "tube_insert", "tube_out")
+SEG_KEYS = ("seg_len", "body_d", "chan_d", "thread_d", "thread_pitch", "thread_depth", "thread_len", "thread_ch", "root_ch", "fit_clr")
+HEAD_KEYS = ("body_d", "chan_d", "thread_d", "thread_pitch", "thread_depth", "thread_len", "thread_ch", "root_ch", "fit_clr",
+             "spool_d", "spool_wid", "spool_space", "spool_hole", "spool_clr", "lid_len")
 
 
 def defaults():
@@ -228,11 +231,17 @@ def cyl_z(r, z0, z1):
 
 
 def clean(shape):
-    """Merge coplanar faces, but only keep the result if it is still a valid solid of the same volume."""
+    """Merge coplanar faces, but only keep the result if it is still a valid solid of the same volume and it
+    still survives the half cut of the cut-through view (merging faces can leave a shape that looks valid but
+    fails the next boolean)."""
     try:
         s = shape.copy().removeSplitter()        # on a copy: removeSplitter can damage the shape it is called on
         if s.isValid() and abs(s.Volume - shape.Volume) <= 1e-3 * abs(shape.Volume):
-            return s
+            bb = s.BoundBox
+            probe = Part.makeBox(bb.XLength + 10.0, 120.0, 240.0, V(bb.XMin - 5.0, -120.0, -120.0))
+            r = s.cut(probe)
+            if r.isValid() and r.Volume > 0.05 * s.Volume:
+                return s
     except Exception:
         pass
     return shape
@@ -271,13 +280,31 @@ def check_thread(p):
         raise ValueError("the thread length is too short for this step - make the thread longer")
 
 
-def make_stub_gen(R_M, P, depth, Lt):
-    """A male thread stub in local coordinates (axis +Z, shoulder at z = 0)."""
+def stub_root(p):
+    """Size of the 45-degree chamfer at the foot of the thread stub.  It has to stay inside the countersink of the
+    socket the stub screws into, so that socket limits it."""
+    room = (p["thread_depth"] + p["fit_clr"] + p["thread_ch"] - 0.15) if p["thread_ch"] > 0.0 else (p["fit_clr"] - 0.05)
+    return max(min(p["root_ch"], room), 0.0)
+
+
+def make_stub_gen(R_M, P, depth, Lt, ch=0.0, rc=0.0):
+    """A male thread stub in local coordinates (axis +Z, shoulder at z = 0).  With ch > 0 the free end
+    gets a 45-degree lead-in chamfer: the end face is smaller than the thread core by ch."""
     z0 = ridge_hw(P, depth) + 0.05
-    return cyl_z(R_M - depth, 0.0, Lt).fuse(thread_ridge(R_M, P, depth, z0, Lt - z0))
+    stub = cyl_z(R_M - depth, 0.0, Lt).fuse(thread_ridge(R_M, P, depth, z0, Lt - z0))
+    if rc > 0.0:                                # 45-degree chamfer at the foot, where the stub meets the shoulder
+        stub = stub.fuse(Part.makeCone(R_M - depth + rc + 0.2, R_M - depth, rc + 0.2, V(0, 0, -0.2), V(0, 0, 1)))
+    ch = min(ch, 0.25 * Lt)
+    if ch > 0.0:
+        r_end = R_M - depth - ch                # radius of the end face
+        r_out = R_M + 1.0
+        reach = r_out - r_end                   # 45 degrees: the cone widens by 1 mm per mm
+        keep = Part.makeCone(r_end, r_out, reach, V(0, 0, Lt), V(0, 0, -1)).fuse(cyl_z(r_out, -1.0, Lt - reach))
+        stub = stub.common(keep)
+    return stub
 
 
-def make_socket_tool(R_M, P, depth, Lt, clr, bore_to):
+def make_socket_tool(R_M, P, depth, Lt, clr, bore_to, ch=0.0):
     """Cutting tool for a female thread in local coordinates (mouth at z = 0, going
     to +Z), with the same thread phase as make_stub_gen.  The plain bore goes on
     down to z = bore_to."""
@@ -290,12 +317,18 @@ def make_socket_tool(R_M, P, depth, Lt, clr, bore_to):
     z0s = z0 - k * P
     z1s = Ls - (hw_a - thread_extra(P, depth)) - 0.05
     tool = cyl_z(R_M - depth + clr, -1.0, max(bore_to, Ls))
-    return tool.fuse(thread_ridge(R_M + clr, P, depth, z0s, z1s))
+    tool = tool.fuse(thread_ridge(R_M + clr, P, depth, z0s, z1s))
+    if ch > 0.0:                                # 45-degree countersink at the mouth: ch wider than the thread groove
+        r_b = R_M - depth + clr
+        r_top = R_M + clr + ch + 0.5            # radius at z = -0.5, so it is R_M + clr + ch at the mouth plane
+        tool = tool.fuse(Part.makeCone(r_top, r_b, r_top - r_b, V(0, 0, -0.5), V(0, 0, 1)))
+    return tool
 
 
 def pen_stub(p):
     """The pen's male stub pointing to -X, shoulder at x = 0."""
-    s = make_stub_gen(p["thread_d"] / 2.0, p["thread_pitch"], p["thread_depth"], p["thread_len"]).copy()
+    s = make_stub_gen(p["thread_d"] / 2.0, p["thread_pitch"], p["thread_depth"], p["thread_len"], p["thread_ch"],
+                      stub_root(p)).copy()
     s.rotate(V(0, 0, 0), V(0, 1, 0), -90.0)     # +Z -> -X
     return s
 
@@ -303,7 +336,7 @@ def pen_stub(p):
 def pen_socket(p, x_mouth):
     """The pen's female socket, mouth at x = x_mouth, going to -X."""
     t = make_socket_tool(p["thread_d"] / 2.0, p["thread_pitch"], p["thread_depth"], p["thread_len"],
-                         p["fit_clr"], p["thread_len"] + SOCKET_EXTRA).copy()
+                         p["fit_clr"], p["thread_len"] + SOCKET_EXTRA, p["thread_ch"]).copy()
     t.rotate(V(0, 0, 0), V(0, 1, 0), -90.0)
     t.translate(V(x_mouth, 0, 0))
     return t
@@ -368,6 +401,16 @@ def make_tip(p):
         warn.append("The needle seat is longer than the tip, so it was shortened.")
         x_seat = 0.5
 
+    # A wire hole almost as wide as the needle seat leaves no shoulder for the tube to stop against. Then the
+    # wire hole narrows (a 45-degree cone, so it still prints) to a short neck just behind the seat.
+    neck_R = None
+    if p["tube_insert"] >= 1.0 and chan_R > seat_R - 0.15:
+        n_R = max(seat_R - 0.4, p["tube_id"] / 2.0 + 0.1)
+        x_n1 = x_seat - 1.0                     # the neck is 1 mm long
+        x_n0 = x_n1 - (chan_R - n_R)            # the cone back to the full wire hole
+        if n_R <= seat_R - 0.15 and x_n0 >= 0.5:
+            neck_R = n_R
+
     if flat < 0.15:
         raise ValueError("this thread depth is too big for the step (flats would be %.2f mm) - "
                          "use a bigger step or a shallower thread" % flat)
@@ -385,8 +428,8 @@ def make_tip(p):
         warn.append("Thread length is under 2.5 turns - the joint may be weak.")
     if R_m - chan_R < 1.2:
         warn.append("Wall around the wire hole in the thread stub is under 1.2 mm.")
-    if chan_R > seat_R - 0.15:
-        warn.append("The wire hole is as wide as the needle seat: the tube has no shoulder to stop against.")
+    if chan_R > seat_R - 0.15 and neck_R is None and p["tube_insert"] >= 1.0:
+        warn.append("The wire hole is as wide as the needle seat and cannot be narrowed behind it: the tube has no shoulder to stop against.")
     if tip_R - seat_R < 1.2:
         warn.append("Tip end wall around the needle seat is under 1.2 mm.")
     if tip_R > R_g:
@@ -399,14 +442,20 @@ def make_tip(p):
         Part.makeCone(R_g, tip_R, p["taper_len"], V(x_base, 0, 0), V(1, 0, 0))).fuse(
         cyl_x(tip_R, x_cone, x_end))
     tip = body.fuse(pen_stub(p))
-    tip = tip.cut(cyl_x(chan_R, -Lt - 1.0, x_end + 1.0))      # wire hole
+    if neck_R is None:
+        tip = tip.cut(cyl_x(chan_R, -Lt - 1.0, x_end + 1.0))  # wire hole
+    else:
+        tip = tip.cut(cyl_x(chan_R, -Lt - 1.0, x_n0))         # wire hole, narrowing just behind the needle seat
+        tip = tip.cut(Part.makeCone(chan_R, neck_R, x_n1 - x_n0, V(x_n0, 0, 0), V(1, 0, 0)))
+        tip = tip.cut(cyl_x(neck_R, x_n1 - 0.05, x_seat + 0.5))
     tip = tip.cut(cyl_x(seat_R, x_seat, x_end + 1.0))         # needle seat
     tip = clean(tip)
 
     tube_id = min(p["tube_id"], p["tube_od"] - 0.2)
     tube = cyl_x(p["tube_od"] / 2.0, x_seat, x_end + p["tube_out"]).cut(
         cyl_x(tube_id / 2.0, x_seat - 1.0, x_end + p["tube_out"] + 1.0))
-    return dict(tip=tip, tube=tube, warn=warn, x_end=x_end, seat_d=2 * seat_R, seat_deep=x_end - x_seat)
+    return dict(tip=tip, tube=tube, warn=warn, x_end=x_end, seat_d=2 * seat_R, seat_deep=x_end - x_seat,
+                neck_d=(2 * neck_R if neck_R else None), x_seat=x_seat)
 
 
 # ---------------------------------------------------------------- one body segment
@@ -445,6 +494,9 @@ def make_segment(p):
 
     if wall < 1.2:
         warn.append("The wall around the socket is %.2f mm - under 1.2 mm it can crack; use a wider body or a smaller thread." % wall)
+    if p["thread_ch"] > 0.0 and wall - p["thread_ch"] < 0.75:
+        warn.append("The lead-in chamfer leaves only %.2f mm of wall at the socket mouth - use a smaller chamfer or a wider body."
+                    % (wall - p["thread_ch"]))
     if clr < 0.1:
         warn.append("Fit clearance under 0.1 mm: printed threads this tight usually will not turn.")
     if depth - clr < 0.4:
@@ -482,7 +534,9 @@ def make_holder(p):
     sp_R = p["spool_d"] / 2.0
     W = p["spool_wid"]                          # width of the spool you use
     S = max(p["spool_space"], W)                # depth of the spool space (the widest spool the holder takes)
-    pin_R = (p["spool_hole"] - 0.4) / 2.0
+    sc = p["spool_clr"]                         # printing tolerance: extra room around the spool and its pin
+    ax = 0.75 * sc                              # play above and below the spool
+    pin_R = (p["spool_hole"] - sc) / 2.0        # the pin is thinner than the spool hole by the clearance
     lid_Lt = p["lid_len"]
     Ls_l = lid_Lt + SOCKET_EXTRA
     z_stub = ridge_hw(P, depth) + 0.05
@@ -492,20 +546,20 @@ def make_holder(p):
                          "use a bigger step or a shallower thread" % flat)
     check_thread(p)
     if pin_R < 0.6:
-        raise ValueError("the spool centre hole is too small for a pin (needs at least 1.6 mm)")
+        raise ValueError("the spool centre hole is too small for a pin (needs at least %.1f mm with this clearance)" % (1.2 + sc))
     if lid_Lt - 2.0 * z_stub < 0.75 * P:
         raise ValueError("the lid thread is too short for this step")
     if lid_Lt < 2.5 * P:
         warn.append("The lid thread is under 2.5 turns - the lid may be loose.")
 
-    R_ml = sp_R + 0.5                           # lid thread core radius (the spool slides through it)
+    R_ml = sp_R + sc                            # lid thread core radius (the spool slides through it)
     R_Ml = R_ml + depth                         # lid thread outer radius
     R_b = R_ml + clr                            # spool bore
     R_h = R_Ml + clr + 1.6                      # outer radius of the round housing
     R_k = R_h + 1.0                             # outer radius of the lid knob (it overhangs 1 mm: easy to grab)
     knob = 6.0                                  # thickness of the lid knob
-    y_fl = -S / 2.0 - 0.3                       # floor of the spool cavity
-    y_sz = S / 2.0 + 0.3                        # top of the plain spool zone
+    y_fl = -S / 2.0 - ax                        # floor of the spool cavity
+    y_sz = S / 2.0 + ax                         # top of the plain spool zone
     y_top = y_sz + Ls_l                         # top of the holder, the lid sits here
     y_f = min(y_fl - 2.0, -(R_g + 0.5))         # bottom of the holder (the print bed side): a 2 mm floor under the spool
     m = R_b + 1.5 + Ls                          # spool centre to the face where a segment screws in
@@ -518,13 +572,13 @@ def make_holder(p):
     head = housing.fuse(nose)
 
     # spool cavity with the thread for the lid (built along the lid axis, then turned into place)
-    cav = make_socket_tool(R_Ml, P, depth, lid_Lt, clr, y_top - y_fl).copy()
+    cav = make_socket_tool(R_Ml, P, depth, lid_Lt, clr, y_top - y_fl, p["thread_ch"]).copy()
     cav.rotate(V(0, 0, 0), V(1, 0, 0), 90.0)    # +Z -> -Y
     cav.translate(V(x_c, y_top, 0.0))
     head = head.cut(cav)
 
     # the socket for the first segment (or the tip): mouth at x = 0, going to -X
-    sock_f = make_socket_tool(R_M, P, depth, Lt, clr, Ls).copy()
+    sock_f = make_socket_tool(R_M, P, depth, Lt, clr, Ls, p["thread_ch"]).copy()
     sock_f.rotate(V(0, 0, 0), V(0, 1, 0), -90.0)                 # +Z -> -X
     head = head.cut(sock_f)
 
@@ -536,7 +590,7 @@ def make_holder(p):
         head = head.cut(Part.makeCylinder(chan_R, abs(x_end - x_a), V(x_a, 0, 0), V(sgn, 0, 0)))
         if r_fun - chan_R > 0.2:
             head = head.cut(Part.makeCone(r_fun, chan_R, r_fun - chan_R, V(x_w - sgn * 0.3, 0, 0), V(sgn, 0, 0)))
-    y_he = S / 2.0 + 0.5                        # the hub of the lid ends here (just above the widest spool)
+    y_he = S / 2.0 + ax + 0.2                   # the hub of the lid ends here (just above the widest spool)
     e_pin = 4.5                                 # how far the top of the pin reaches into the hub of the lid
     y_pt = y_he + e_pin                         # top of the pin
     pin = Part.makeCylinder(pin_R, y_pt - 0.5 - (y_fl - 0.5), V(x_c, y_fl - 0.5, 0.0), V(0, 1, 0)).fuse(
@@ -544,7 +598,7 @@ def make_holder(p):
     head = clean(head.fuse(pin))                                 # long pin for the spool, the lid holds its top end
 
     # lid: a thick fluted knob + the same kind of thread, screwed in from above
-    stub = make_stub_gen(R_Ml, P, depth, lid_Lt)
+    stub = make_stub_gen(R_Ml, P, depth, lid_Lt, p["thread_ch"])
     knob_s = cyl_z(R_k, -knob, 0.0).cut(flutes_z(R_k, -knob, 0.0))
     lid = knob_s.fuse(stub).copy()
     r_in = R_ml - 2.0                           # hollow lid, saves material: the thread is a tube with a 2 mm wall
@@ -908,11 +962,16 @@ def build_dialog(doc):
             "(segments %.0f mm each) = %.0f mm long."
             % (x_end, nf, -hres["x_rear"], L, total),
             "Thread: outer diameter %.1f mm, step %.2f mm, depth %.2f mm, 45-degree flanks, "
-            "flat crest and root %.2f mm wide." % (p["thread_d"], P, depth, sres["flat"]),
+            "flat crest and root %.2f mm wide.%s" % (p["thread_d"], P, depth, sres["flat"],
+                (" Lead-in chamfer %.2f mm on the stub ends and socket mouths." % p["thread_ch"]) if p["thread_ch"] > 0 else "")
+                + ((" Foot chamfer %.2f mm where the stub meets the shoulder." % stub_root(p)) if stub_root(p) > 0 else ""),
             "Fit: sockets are %.2f mm bigger than the stubs on every side, thread overlap %.2f mm, "
             "wall around a socket %.2f mm." % (p["fit_clr"], depth - p["fit_clr"], sres["wall"]),
-            ("Wire hole %.2f mm through the pen. Needle seat %.2f mm, %.1f mm deep; tube sticks out %.1f mm."
-             % (p["chan_d"], tres["seat_d"], tres["seat_deep"], p["tube_out"]))
+            ("Wire hole %.2f mm through the pen%s. Needle seat %.2f mm, %.1f mm deep; tube sticks out %.1f mm."
+             % (p["chan_d"],
+                (" (it narrows to %.2f mm just behind the needle seat, so the tube has a shoulder)" % tres["neck_d"])
+                if tres.get("neck_d") else "",
+                tres["seat_d"], tres["seat_deep"], p["tube_out"]))
             if tres["seat_deep"] >= 0.05 else
             ("Wire hole %.2f mm through the pen. No needle seat (depth 0): the tube sits on the end face of the "
              "tip, glue it there; it sticks out %.1f mm." % (p["chan_d"], p["tube_out"])),
